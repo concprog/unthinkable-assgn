@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { VerifyEmailBanner } from "@/components/VerifyEmailBanner";
 import { apiFetch, ApiError } from "@/lib/api";
 import { ChargeBreakdownCard, type ChargeBreakdownData } from "@/components/ChargeBreakdown";
 
@@ -78,6 +79,8 @@ export default function NewOrderPage() {
           My orders →
         </Link>
       </div>
+
+      <VerifyEmailBanner />
 
       <form onSubmit={calculate} className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm space-y-4">
         <Field label="Pickup address" id="pickup_line1" value={form.pickup_line1} onChange={(v) => set("pickup_line1", v)} placeholder="12 MG Road" />

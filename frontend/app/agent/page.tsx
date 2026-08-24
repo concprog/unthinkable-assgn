@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch, ApiError } from "@/lib/api";
+import { VerifyEmailBanner } from "@/components/VerifyEmailBanner";
 import type { OrderStatus } from "@/lib/status";
 
 type Task = {
@@ -61,6 +62,10 @@ export default function AgentTaskListPage() {
           <option value="BUSY">Busy</option>
           <option value="OFFLINE">Offline</option>
         </select>
+      </div>
+
+      <div className="mb-4">
+        <VerifyEmailBanner />
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white shadow-sm divide-y divide-zinc-100">

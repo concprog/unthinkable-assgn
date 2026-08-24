@@ -1,17 +1,28 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, ApiError } from "@/lib/api";
 import { homeForRole, saveSession, type Role } from "@/lib/auth";
 
 type AuthResponse = {
   token: string;
+  email_verified?: boolean;
   user: { id: string; role: Role; full_name: string };
 };
 
+// useSearchParams needs a Suspense boundary for the static prerender.
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
+  const params = useSearchParams();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [form, setForm] = useState({
     full_name: "",
@@ -21,7 +32,16 @@ export default function LoginPage() {
     role: "customer" as Role,
   });
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(
+    params.get("expired") ? "Your session expired — please sign in again." : null
+  );
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    // prefill email when coming back to verify an account
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMode(params.get("mode") === "register" ? "register" : "login");
+  }, [params]);
 
   function set<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -40,7 +60,15 @@ export default function LoginPage() {
           : form;
       const res = await apiFetch<AuthResponse>(path, { method: "POST", body });
       saveSession(res.token, res.user.role);
-      router.push(homeForRole(res.user.role));
+
+      if (res.email_verified === false) {
+        // best-effort; failure is non-blocking (placeholder Resend key)
+        apiFetch("/auth/send-verification", { method: "POST" }).catch(() => {});
+        setNotice("Account created. We sent a verification link to your email.");
+      }
+
+      const next = params.get("next");
+      router.push(next && next.startsWith("/") ? next : homeForRole(res.user.role));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Request failed");
       setBusy(false);
@@ -57,6 +85,9 @@ export default function LoginPage() {
           {mode === "login" ? "Sign in" : "Create account"}
         </h1>
 
+        {notice && (
+          <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">{notice}</p>
+        )}
         {mode === "register" && (
           <>
             <Field label="Full name" id="full_name" value={form.full_name} onChange={(v) => set("full_name", v)} placeholder="R. Kumar" />
