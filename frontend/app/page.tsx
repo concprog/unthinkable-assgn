@@ -24,6 +24,12 @@ export default function Home() {
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-8 p-8">
       <h1 className="text-3xl font-semibold tracking-tight">Last-Mile Delivery Tracker</h1>
+      <a
+        href="/login"
+        className="rounded-md bg-black px-6 py-2.5 text-sm font-medium text-white hover:bg-zinc-800"
+      >
+        Sign in / Create account
+      </a>
       <div className="grid w-full max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3">
         {ROLES.map((r) => (
           <Link
