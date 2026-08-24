@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lastmile-tracker/backend/repository"
+	"lastmile-tracker/backend/services"
 )
 
 type CreateZoneRequest struct {
@@ -223,6 +224,21 @@ func DeleteRateCard(pool *pgxpool.Pool) fiber.Handler {
 		}
 		if err := repository.DeleteRateCard(c.Context(), pool, id); err != nil {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
+// ResendNotification — POST /api/admin/notifications/:id/resend:
+// retries a FAILED or PENDING email through the email service.
+func ResendNotification(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id := c.Params("id")
+		if id == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid notification id"})
+		}
+		if err := services.NewNotifier(pool).ResendNotification(c.Context(), id); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "resend failed: " + err.Error()})
 		}
 		return c.JSON(fiber.Map{"ok": true})
 	}

@@ -71,6 +71,7 @@ func main() {
 	admin.Patch("/rate-cards/:id<int>/lanes", handlers.EditLane(pool))
 	admin.Get("/orders", handlers.ListAdminOrders(pool))
 	admin.Get("/orders/:id<guid>/nearby-agents", handlers.NearbyAgents(pool))
+	admin.Post("/notifications/:id/resend", handlers.ResendNotification(pool))
 
 	app.Post("/webhooks/clerk", handlers.ClerkWebhook(pool))
 
