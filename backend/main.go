@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"time"
@@ -16,9 +17,16 @@ import (
 func main() {
 	pool := db.Connect()
 
+	if err := db.Migrate(context.Background(), pool); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
 	store := db.NewLimiterStore(pool)
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		ServerHeader: "Fiber",
+		AppName:      "lastmile-tracker-backend",
+	})
 
 	app.Use(limiter.New(limiter.Config{
 		Max:        60,
@@ -30,6 +38,7 @@ func main() {
 
 	orders := api.Group("/orders")
 	orders.Post("/", handlers.CreateOrder(pool))
+	orders.Get("/", handlers.ListMyOrders(pool))
 	orders.Get("/:id<guid>", handlers.GetOrder(pool))
 	orders.Post("/:id<guid>/assign", handlers.AssignOrder(pool))
 	orders.Patch("/:id<guid>/status", handlers.UpdateOrderStatus(pool))
@@ -37,9 +46,17 @@ func main() {
 
 	agents := api.Group("/agents", middleware.RequireRole("admin", "agent"))
 	agents.Patch("/:id<guid>/location", handlers.UpdateAgentLocation(pool))
+	me := agents.Group("/me")
+	me.Get("/orders", handlers.MyOrders(pool))
+	me.Patch("/availability", handlers.SetAvailability(pool))
 
 	admin := api.Group("/admin", middleware.RequireRole("admin"))
 	admin.Post("/zones", handlers.CreateZone(pool))
+	admin.Get("/zones", handlers.ListZones(pool))
+	admin.Get("/rate-cards", handlers.ListRateCards(pool))
+	admin.Patch("/rate-cards/:id<int>/lanes", handlers.EditLane(pool))
+	admin.Get("/orders", handlers.ListAdminOrders(pool))
+	admin.Get("/orders/:id<guid>/nearby-agents", handlers.NearbyAgents(pool))
 
 	app.Post("/webhooks/clerk", handlers.ClerkWebhook(pool))
 
@@ -47,5 +64,7 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Fatal(app.Listen(":" + port))
+	log.Fatal(app.Listen(":"+port, fiber.ListenConfig{
+		ListenerNetwork: "tcp",
+	}))
 }

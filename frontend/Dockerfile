@@ -18,6 +18,9 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 FROM base AS runner
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+# BACKEND_API_URL is read by server.js at startup (next.config.ts rewrites):
+# set it on the container, not as a build arg. Changing the backend domain
+# = restart the service with a new value; no image rebuild.
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public

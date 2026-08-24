@@ -1,19 +1,24 @@
 package services
 
 import (
-	"context"
-	"fmt"
 	"math"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	VolumetricDivisor = 5000.0
+	DefaultVolumetricDivisor = 5000.0
 )
 
+// VolumetricWeightWithDivisor lets an active rate card override the
+// industry-standard divisor of 5000 (rate_cards.volumetric_divisor).
+func VolumetricWeightWithDivisor(l, b, h, divisor float64) float64 {
+	if divisor <= 0 {
+		divisor = DefaultVolumetricDivisor
+	}
+	return (l * b * h) / divisor
+}
+
 func VolumetricWeight(l, b, h float64) float64 {
-	return (l * b * h) / VolumetricDivisor
+	return VolumetricWeightWithDivisor(l, b, h, DefaultVolumetricDivisor)
 }
 
 func ChargeableWeight(actual, volumetric float64) float64 {
@@ -69,8 +74,4 @@ func ComputeCharge(q *RateQuote, chargeableWeight, orderValue float64, isCOD boo
 
 func round2(v float64) float64 {
 	return math.Round(v*100) / 100
-}
-
-func CreateOrder(ctx context.Context, pool *pgxpool.Pool, req interface{}) (interface{}, error) {
-	return nil, fmt.Errorf("not implemented")
 }
