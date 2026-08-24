@@ -34,7 +34,13 @@ func main() {
 		Storage:    store,
 	}))
 
-	api := app.Group("/api", middleware.ClerkAuth())
+	// Public auth endpoints — register/login issue the JWT that
+	// RequireAuth verifies on everything below.
+	app.Post("/api/auth/register", handlers.Register(pool))
+	app.Post("/api/auth/login", handlers.Login(pool))
+
+	api := app.Group("/api", middleware.RequireAuth())
+	api.Get("/auth/me", handlers.Me(pool))
 
 	orders := api.Group("/orders")
 	orders.Post("/", handlers.CreateOrder(pool))

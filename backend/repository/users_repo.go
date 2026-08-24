@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,4 +48,75 @@ func DeactivateUserFromClerk(ctx context.Context, pool *pgxpool.Pool, data json.
 		payload.Data.ID)
 
 	return err
+}
+
+// ---------------------------------------------------------
+// First-party auth — the schema's password_hash column with
+// app-level RBAC via the role enum.
+// ---------------------------------------------------------
+
+type CreateUserInput struct {
+	FullName     string
+	Email        string
+	Phone        string
+	PasswordHash string
+	Role         string // customer | agent | admin
+}
+
+func CreateUser(ctx context.Context, pool *pgxpool.Pool, in *CreateUserInput) (string, error) {
+	var id string
+	err := pool.QueryRow(ctx,
+		`INSERT INTO users (role, full_name, email, phone, password_hash)
+		 VALUES ($1::user_role, $2, $3, $4, $5) RETURNING id`,
+		in.Role, in.FullName, in.Email, in.Phone, in.PasswordHash).Scan(&id)
+	if isUniqueViolation(err) {
+		var field string
+		_ = pool.QueryRow(ctx,
+			`SELECT 'email' WHERE EXISTS (SELECT 1 FROM users WHERE email = $1)
+			 UNION ALL SELECT 'phone' WHERE EXISTS (SELECT 1 FROM users WHERE phone = $2) LIMIT 1`,
+			in.Email, in.Phone).Scan(&field)
+		if field == "" {
+			field = "email or phone"
+		}
+		return "", fmt.Errorf("an account with that %s already exists", field)
+	}
+	return id, err
+}
+
+type UserAuthRow struct {
+	ID           string
+	Role         string
+	FullName     string
+	PasswordHash *string
+	IsActive     bool
+}
+
+func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (*UserAuthRow, error) {
+	row := &UserAuthRow{}
+	err := pool.QueryRow(ctx,
+		`SELECT id, role::text, full_name, password_hash, is_active
+		 FROM users WHERE lower(email) = lower($1)`, email).
+		Scan(&row.ID, &row.Role, &row.FullName, &row.PasswordHash, &row.IsActive)
+	if err != nil {
+		return nil, pgx.ErrNoRows
+	}
+	return row, nil
+}
+
+type UserProfileRow struct {
+	ID       string `json:"id"`
+	Role     string `json:"role"`
+	FullName string `json:"full_name"`
+	Email    string `json:"email"`
+}
+
+func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*UserProfileRow, error) {
+	row := &UserProfileRow{}
+	err := pool.QueryRow(ctx,
+		`SELECT id, role::text, full_name, email FROM users WHERE id = $1 AND is_active = true`, id).
+		Scan(&row.ID, &row.Role, &row.FullName, &row.Email)
+	if err != nil {
+		return nil, pgx.ErrNoRows
+	}
+	return row, nil
 }
