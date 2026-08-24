@@ -49,6 +49,26 @@ export async function apiFetch<T>(
       const data = await res.json();
       if (data?.error) message = data.error;
     } catch {}
+
+    // Expired/invalid session on a protected page: drop the stale
+    // token and send the user to login. Login/register failures (no
+    // token stashed) surface the error inline instead.
+    if (res.status === 401 && typeof window !== "undefined") {
+      const hadToken = localStorage.getItem("auth_token");
+      const onAuthPage = window.location.pathname === "/login";
+      if (hadToken && !onAuthPage) {
+        const { clearSession } = await import("./auth");
+        clearSession();
+        // full navigation is intentional: drops all client state
+        // (no router available outside a component)
+        const next = encodeURIComponent(
+          window.location.pathname + window.location.search
+        );
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+        window.location.assign(`/login?next=${next}&expired=1`);
+      }
+    }
+
     throw new ApiError(res.status, message);
   }
 

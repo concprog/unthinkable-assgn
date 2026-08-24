@@ -6,18 +6,35 @@ const ROLE_HOME: Record<string, string> = {
   admin: "/admin",
 };
 
+// Edge gate for /dashboard, /agent, /admin. No session at all →
+// /login?next=<path> so the user lands back where they started after
+// signing in. Wrong role → bounced to their own home page.
 export function proxy(request: NextRequest) {
   const role = request.cookies.get("role")?.value ?? "";
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
 
-  if (pathname.startsWith("/admin") && role !== "admin") {
-    return NextResponse.redirect(new URL("/", request.url));
+  const area =
+    pathname.startsWith("/admin") || pathname.startsWith("/agent")
+      ? "staff"
+      : "customer";
+
+  if (area === "customer" && role !== "customer" && role !== "admin") {
+    return deny(request, pathname + search);
   }
-  if (pathname.startsWith("/agent") && role !== "agent" && role !== "admin") {
-    return NextResponse.redirect(new URL("/", request.url));
+  if (area === "staff" && pathname.startsWith("/admin") && role !== "admin") {
+    // logged in as the wrong role → own home; anonymous → login
+    return ROLE_HOME[role]
+      ? NextResponse.redirect(new URL(ROLE_HOME[role], request.url))
+      : deny(request, pathname + search);
   }
 
   return NextResponse.next();
+}
+
+function deny(request: NextRequest, next: string): NextResponse {
+  const url = new URL("/login", request.url);
+  if (next && next !== "/") url.searchParams.set("next", next);
+  return NextResponse.redirect(url);
 }
 
 export const config = {
