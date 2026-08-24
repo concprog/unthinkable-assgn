@@ -168,6 +168,66 @@ func RemoveZoneArea(pool *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+// CreateRateCard — POST /api/admin/rate-cards: a new card for B2B or
+// B2C. Created inactive; use PATCH is_active to go live (retires the
+// previous active card of that type).
+func CreateRateCard(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		var req repository.CreateRateCardInput
+		if err := c.Bind().Body(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if req.OrderType != "B2B" && req.OrderType != "B2C" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "order_type must be B2B or B2C"})
+		}
+		if req.Name == "" {
+			req.Name = "Default card"
+		}
+
+		id, err := repository.CreateRateCard(c.Context(), pool, &req)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create rate card"})
+		}
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": id})
+	}
+}
+
+// UpdateRateCard — PATCH /api/admin/rate-cards/:id: surcharges,
+// volumetric divisor, name and/or is_active toggle.
+func UpdateRateCard(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil || id <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rate card id"})
+		}
+
+		var req repository.UpdateRateCardInput
+		if err := c.Bind().Body(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		if err := repository.UpdateRateCard(c.Context(), pool, id, &req); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to update rate card"})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
+// DeleteRateCard — DELETE /api/admin/rate-cards/:id: only inactive
+// cards; orders reference active ones.
+func DeleteRateCard(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil || id <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid rate card id"})
+		}
+		if err := repository.DeleteRateCard(c.Context(), pool, id); err != nil {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
 // ListAdminOrders — GET /api/admin/orders?zone=&status=&status=&agent=
 // `status` may repeat (the assignments page asks for CREATED and FAILED
 // in one call), so the raw query string is parsed directly.

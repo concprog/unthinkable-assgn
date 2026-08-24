@@ -82,15 +82,23 @@ type LaneRow struct {
 }
 
 type RateCardRow struct {
-	ID       int       `json:"id"`
-	OrderType string   `json:"order_type"`
-	IsActive bool      `json:"is_active"`
-	Lanes    []LaneRow `json:"lanes"`
+	ID                int       `json:"id"`
+	OrderType         string    `json:"order_type"`
+	Name              *string   `json:"name,omitempty"`
+	VolumetricDivisor int       `json:"volumetric_divisor"`
+	CODSurchargeFlat  float64   `json:"cod_surcharge_flat"`
+	CODSurchargePct   float64   `json:"cod_surcharge_pct"`
+	FuelSurchargePct  float64   `json:"fuel_surcharge_pct"`
+	GSTPct            float64   `json:"gst_pct"`
+	IsActive          bool      `json:"is_active"`
+	Lanes             []LaneRow `json:"lanes"`
 }
 
 func ListRateCards(ctx context.Context, pool *pgxpool.Pool) ([]RateCardRow, error) {
 	cardRows, err := pool.Query(ctx,
-		`SELECT id, order_type::text, is_active FROM rate_cards ORDER BY is_active DESC, order_type, id`)
+		`SELECT id, order_type::text, name, volumetric_divisor,
+		        cod_surcharge_flat, cod_surcharge_pct, fuel_surcharge_pct, gst_pct, is_active
+		 FROM rate_cards ORDER BY is_active DESC, order_type, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +107,8 @@ func ListRateCards(ctx context.Context, pool *pgxpool.Pool) ([]RateCardRow, erro
 	var cards []RateCardRow
 	for cardRows.Next() {
 		var c RateCardRow
-		if err := cardRows.Scan(&c.ID, &c.OrderType, &c.IsActive); err != nil {
+		if err := cardRows.Scan(&c.ID, &c.OrderType, &c.Name, &c.VolumetricDivisor,
+			&c.CODSurchargeFlat, &c.CODSurchargePct, &c.FuelSurchargePct, &c.GSTPct, &c.IsActive); err != nil {
 			return nil, err
 		}
 		cards = append(cards, c)
@@ -114,6 +123,9 @@ func ListRateCards(ctx context.Context, pool *pgxpool.Pool) ([]RateCardRow, erro
 	}
 	for i := range cards {
 		cards[i].Lanes = lanes[cards[i].ID]
+		if cards[i].Lanes == nil {
+			cards[i].Lanes = []LaneRow{}
+		}
 	}
 	return cards, nil
 }
@@ -173,4 +185,108 @@ func UpsertLane(ctx context.Context, pool *pgxpool.Pool, in *UpsertLaneInput) (*
 		BasePrice:            in.BasePrice,
 		AdditionalPricePerKG: in.AdditionalPricePerKG,
 	}, nil
+}
+
+// ---------------------------------------------------------
+// Rate card lifecycle — create a card for an order type and
+// edit its surcharges/divisor. Only one ACTIVE card per order
+// type is allowed (partial unique index), so activating one
+// card deactivates the previous active card of that type.
+// ---------------------------------------------------------
+
+type CreateRateCardInput struct {
+	OrderType         string  `json:"order_type"` // B2B | B2C
+	Name              string  `json:"name"`
+	VolumetricDivisor int     `json:"volumetric_divisor"`
+	CODSurchargeFlat  float64 `json:"cod_surcharge_flat"`
+	CODSurchargePct   float64 `json:"cod_surcharge_pct"`
+	FuelSurchargePct  float64 `json:"fuel_surcharge_pct"`
+	GSTPct            float64 `json:"gst_pct"`
+}
+
+func CreateRateCard(ctx context.Context, pool *pgxpool.Pool, in *CreateRateCardInput) (int, error) {
+	if in.VolumetricDivisor <= 0 {
+		in.VolumetricDivisor = 5000
+	}
+	var id int
+	err := pool.QueryRow(ctx,
+		`INSERT INTO rate_cards (order_type, name, volumetric_divisor,
+			cod_surcharge_flat, cod_surcharge_pct, fuel_surcharge_pct, gst_pct)
+		 VALUES ($1::order_type, $2, $3, $4, $5, $6, $7)
+		 RETURNING id`,
+		in.OrderType, in.Name, in.VolumetricDivisor,
+		in.CODSurchargeFlat, in.CODSurchargePct, in.FuelSurchargePct, in.GSTPct).Scan(&id)
+	return id, err
+}
+
+// UpdateRateCardInput uses pointers so PATCH only touches sent fields.
+type UpdateRateCardInput struct {
+	Name              *string  `json:"name"`
+	VolumetricDivisor *int     `json:"volumetric_divisor"`
+	CODSurchargeFlat  *float64 `json:"cod_surcharge_flat"`
+	CODSurchargePct   *float64 `json:"cod_surcharge_pct"`
+	FuelSurchargePct  *float64 `json:"fuel_surcharge_pct"`
+	GSTPct            *float64 `json:"gst_pct"`
+	IsActive          *bool    `json:"is_active"`
+}
+
+func UpdateRateCard(ctx context.Context, pool *pgxpool.Pool, id int, in *UpdateRateCardInput) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Activating a card must retire the current active card of the same
+	// order type first — uq_one_active_ratecard_per_type would reject it.
+	if in.IsActive != nil && *in.IsActive {
+		tag, err := tx.Exec(ctx,
+			`UPDATE rate_cards SET is_active = false, effective_to = now()
+			 WHERE order_type = (SELECT order_type FROM rate_cards WHERE id = $1)
+			   AND is_active = true AND id <> $1`, id)
+		if err != nil {
+			return err
+		}
+		_ = tag
+		_, err = tx.Exec(ctx,
+			`UPDATE rate_cards SET is_active = true, effective_to = NULL WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+	} else if in.IsActive != nil && !*in.IsActive {
+		_, err = tx.Exec(ctx,
+			`UPDATE rate_cards SET is_active = false, effective_to = now() WHERE id = $1`, id)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE rate_cards SET
+			name               = COALESCE($2, name),
+			volumetric_divisor = COALESCE($3, volumetric_divisor),
+			cod_surcharge_flat = COALESCE($4, cod_surcharge_flat),
+			cod_surcharge_pct  = COALESCE($5, cod_surcharge_pct),
+			fuel_surcharge_pct = COALESCE($6, fuel_surcharge_pct),
+			gst_pct            = COALESCE($7, gst_pct)
+		 WHERE id = $1`,
+		id, in.Name, in.VolumetricDivisor, in.CODSurchargeFlat,
+		in.CODSurchargePct, in.FuelSurchargePct, in.GSTPct)
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteRateCard removes an inactive card; FK on orders.rate_card_id
+// blocks deleting cards already used by orders.
+func DeleteRateCard(ctx context.Context, pool *pgxpool.Pool, id int) error {
+	tag, err := pool.Exec(ctx, `DELETE FROM rate_cards WHERE id = $1 AND is_active = false`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("rate card not found or still active/referenced by orders")
+	}
+	return nil
 }
