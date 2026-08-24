@@ -237,6 +237,9 @@ func ResendNotification(pool *pgxpool.Pool) fiber.Handler {
 		if id == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid notification id"})
 		}
+		if _, err := repository.GetNotificationContext(c.Context(), pool, id); err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notification not found"})
+		}
 		if err := services.NewNotifier(pool).ResendNotification(c.Context(), id); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "resend failed: " + err.Error()})
 		}
