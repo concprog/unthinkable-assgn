@@ -7,6 +7,7 @@ require (
 	github.com/gofiber/storage/postgres/v3 v3.6.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/lestrrat-go/jwx/v2 v2.1.7
+	github.com/resend/resend-go/v3 v3.16.0
 	golang.org/x/crypto v0.55.0
 )
 

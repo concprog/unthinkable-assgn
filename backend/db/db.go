@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -23,12 +24,28 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 		return err
 	}
 	if existing != nil && *existing != "" {
-		return nil
+		return migrateExisting(ctx, pool)
 	}
 
 	log.Println("applying schema.sql")
-	_, err = pool.Exec(ctx, schemaSQL)
-	return err
+	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
+		return err
+	}
+	return migrateExisting(ctx, pool)
+}
+
+// migrateExisting applies idempotent post-schema migrations so already
+// deployed databases pick up new columns without a rebuild-from-zero.
+func migrateExisting(ctx context.Context, pool *pgxpool.Pool) error {
+	statements := []string{
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT FALSE`,
+	}
+	for _, stmt := range statements {
+		if _, err := pool.Exec(ctx, stmt); err != nil {
+			return fmt.Errorf("migration %q: %w", stmt, err)
+		}
+	}
+	return nil
 }
 
 func Connect() *pgxpool.Pool {

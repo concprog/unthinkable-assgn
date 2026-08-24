@@ -84,19 +84,20 @@ func CreateUser(ctx context.Context, pool *pgxpool.Pool, in *CreateUserInput) (s
 }
 
 type UserAuthRow struct {
-	ID           string
-	Role         string
-	FullName     string
-	PasswordHash *string
-	IsActive     bool
+	ID            string
+	Role          string
+	FullName      string
+	PasswordHash  *string
+	IsActive      bool
+	EmailVerified bool
 }
 
 func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (*UserAuthRow, error) {
 	row := &UserAuthRow{}
 	err := pool.QueryRow(ctx,
-		`SELECT id, role::text, full_name, password_hash, is_active
+		`SELECT id, role::text, full_name, password_hash, is_active, email_verified
 		 FROM users WHERE lower(email) = lower($1)`, email).
-		Scan(&row.ID, &row.Role, &row.FullName, &row.PasswordHash, &row.IsActive)
+		Scan(&row.ID, &row.Role, &row.FullName, &row.PasswordHash, &row.IsActive, &row.EmailVerified)
 	if err != nil {
 		return nil, pgx.ErrNoRows
 	}
@@ -104,19 +105,35 @@ func GetUserByEmail(ctx context.Context, pool *pgxpool.Pool, email string) (*Use
 }
 
 type UserProfileRow struct {
-	ID       string `json:"id"`
-	Role     string `json:"role"`
-	FullName string `json:"full_name"`
-	Email    string `json:"email"`
+	ID            string `json:"id"`
+	Role          string `json:"role"`
+	FullName      string `json:"full_name"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
 }
 
 func GetUserByID(ctx context.Context, pool *pgxpool.Pool, id string) (*UserProfileRow, error) {
 	row := &UserProfileRow{}
 	err := pool.QueryRow(ctx,
-		`SELECT id, role::text, full_name, email FROM users WHERE id = $1 AND is_active = true`, id).
-		Scan(&row.ID, &row.Role, &row.FullName, &row.Email)
+		`SELECT id, role::text, full_name, email, email_verified FROM users WHERE id = $1 AND is_active = true`, id).
+		Scan(&row.ID, &row.Role, &row.FullName, &row.Email, &row.EmailVerified)
 	if err != nil {
 		return nil, pgx.ErrNoRows
 	}
 	return row, nil
+}
+
+func SetEmailVerified(ctx context.Context, pool *pgxpool.Pool, id string) error {
+	_, err := pool.Exec(ctx,
+		`UPDATE users SET email_verified = true WHERE id = $1`, id)
+	return err
+}
+
+// GetUserEmail resolves just the recipient address (verification mail).
+func GetUserEmail(ctx context.Context, pool *pgxpool.Pool, id string) (string, string, error) {
+	var email, name string
+	err := pool.QueryRow(ctx,
+		`SELECT email, full_name FROM users WHERE id = $1 AND is_active = true`, id).
+		Scan(&email, &name)
+	return email, name, err
 }

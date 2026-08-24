@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +15,7 @@ import (
 
 	"lastmile-tracker/backend/middleware"
 	"lastmile-tracker/backend/repository"
+	"lastmile-tracker/backend/services"
 )
 
 const tokenTTL = 24 * time.Hour
@@ -82,8 +86,9 @@ func Register(pool *pgxpool.Pool) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to issue token"})
 		}
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-			"token": token,
-			"user":  fiber.Map{"id": id, "role": req.Role, "full_name": req.FullName},
+			"token":          token,
+			"email_verified": false,
+			"user":           fiber.Map{"id": id, "role": req.Role, "full_name": req.FullName},
 		})
 	}
 }
@@ -110,9 +115,84 @@ func Login(pool *pgxpool.Pool) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to issue token"})
 		}
 		return c.JSON(fiber.Map{
-			"token": token,
-			"user":  fiber.Map{"id": user.ID, "role": user.Role, "full_name": user.FullName},
+			"token":          token,
+			"email_verified": user.EmailVerified,
+			"user":           fiber.Map{"id": user.ID, "role": user.Role, "full_name": user.FullName},
 		})
+	}
+}
+
+// issueVerifyToken mints a short-lived JWT scoped to email
+// verification only (purpose claim checked by VerifyEmail).
+func issueVerifyToken(userID string) (string, error) {
+	tok, err := jwt.NewBuilder().
+		Subject(userID).
+		Claim("purpose", "email_verification").
+		IssuedAt(time.Now()).
+		Expiration(time.Now().Add(24 * time.Hour)).
+		Build()
+	if err != nil {
+		return "", err
+	}
+	signed, err := jwt.Sign(tok, jwt.WithKey(jwa.HS256, middleware.AuthSecret()))
+	return string(signed), err
+}
+
+// SendVerification — POST /api/auth/send-verification (authed): mints a
+// verification token and hands it to the Next.js email service, which
+// sends the actual mail via Resend. The verify link points at the
+// frontend's /verify page, which calls GET /api/auth/verify.
+func SendVerification(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		userID := userIDFrom(c)
+		email, name, err := repository.GetUserEmail(c.Context(), pool, userID)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+		}
+
+		vtoken, err := issueVerifyToken(userID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create verification token"})
+		}
+
+		base := os.Getenv("APP_URL") // e.g. https://frontend-production-xxx.up.railway.app
+		if base == "" {
+			base = "http://localhost:3000"
+		}
+		verifyURL := fmt.Sprintf("%s/verify?token=%s", strings.TrimRight(base, "/"), url.QueryEscape(vtoken))
+
+		err = services.SendVerificationEmail(c.Context(), email, name, verifyURL)
+		if err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "could not send verification email: " + err.Error()})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
+// VerifyEmail — GET /api/auth/verify?token=... (public): validates the
+// verification JWT and marks the account verified.
+func VerifyEmail(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		raw := c.Query("token")
+		if raw == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing token"})
+		}
+
+		tok, err := jwt.Parse([]byte(raw),
+			jwt.WithKey(jwa.HS256, middleware.AuthSecret()),
+			jwt.WithValidate(true))
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "invalid or expired verification token"})
+		}
+		purpose, _ := tok.Get("purpose")
+		if p, _ := purpose.(string); p != "email_verification" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a verification token"})
+		}
+
+		if err := repository.SetEmailVerified(c.Context(), pool, tok.Subject()); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to verify email"})
+		}
+		return c.JSON(fiber.Map{"ok": true, "verified": true})
 	}
 }
 

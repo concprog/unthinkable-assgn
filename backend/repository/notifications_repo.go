@@ -29,3 +29,29 @@ func MarkNotificationFailed(ctx context.Context, pool *pgxpool.Pool, notificatio
 		notificationID, errMsg)
 	return err
 }
+
+type NotificationContextRow struct {
+	ID            string
+	Email         string
+	CustomerName  string
+	OrderNumber   string
+	TriggerStatus string
+	Status        string
+}
+
+// GetNotificationContext joins a queued notification to its recipient
+// and order so the email service gets everything it needs in one call.
+func GetNotificationContext(ctx context.Context, pool *pgxpool.Pool, notificationID string) (*NotificationContextRow, error) {
+	row := &NotificationContextRow{ID: notificationID}
+	err := pool.QueryRow(ctx,
+		`SELECT u.email, u.full_name, o.order_number, n.trigger_status::text, n.status::text
+		 FROM notifications n
+		 JOIN users u ON u.id = n.user_id
+		 JOIN orders o ON o.id = n.order_id
+		 WHERE n.id = $1`, notificationID).
+		Scan(&row.Email, &row.CustomerName, &row.OrderNumber, &row.TriggerStatus, &row.Status)
+	if err != nil {
+		return nil, err
+	}
+	return row, nil
+}

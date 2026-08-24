@@ -34,6 +34,7 @@ CREATE TABLE users (
   phone             VARCHAR(20)  NOT NULL UNIQUE,
   password_hash     TEXT,              -- null if auth handled by external IdP (e.g. Clerk)
   external_auth_id  VARCHAR(255) UNIQUE, -- Clerk/Auth0 subject id, if used
+  email_verified    BOOLEAN NOT NULL DEFAULT FALSE,
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
