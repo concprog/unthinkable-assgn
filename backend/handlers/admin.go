@@ -94,6 +94,80 @@ func EditLane(pool *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+// ListZoneAreas — GET /api/admin/zones/:id/areas: every pincode
+// mapped into the zone.
+func ListZoneAreas(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		zoneID, err := strconv.Atoi(c.Params("id"))
+		if err != nil || zoneID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid zone id"})
+		}
+		if ok, err := repository.ZoneExists(c.Context(), pool, zoneID); err != nil || !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "zone not found"})
+		}
+
+		areas, err := repository.ListZoneAreas(c.Context(), pool, zoneID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to list areas"})
+		}
+		if areas == nil {
+			areas = []repository.AreaRow{}
+		}
+		return c.JSON(areas)
+	}
+}
+
+// AddZoneAreas — POST /api/admin/zones/:id/areas {pincodes: [{pincode, city, state}]}.
+// A pincode already assigned to another zone is moved here.
+func AddZoneAreas(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		var req struct {
+			Pincodes []repository.PincodeInput `json:"pincodes"`
+		}
+		if err := c.Bind().Body(&req); err != nil || len(req.Pincodes) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "pincodes array is required"})
+		}
+		for _, p := range req.Pincodes {
+			if len(p.Pincode) < 3 || len(p.Pincode) > 10 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "each pincode must be 3-10 characters"})
+			}
+		}
+
+		zoneID, err := strconv.Atoi(c.Params("id"))
+		if err != nil || zoneID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid zone id"})
+		}
+		if ok, err := repository.ZoneExists(c.Context(), pool, zoneID); err != nil || !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "zone not found"})
+		}
+
+		areas, err := repository.AddZoneAreas(c.Context(), pool, zoneID, req.Pincodes)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to add areas"})
+		}
+		return c.JSON(areas)
+	}
+}
+
+// RemoveZoneArea — DELETE /api/admin/zones/:id/areas/:pincode.
+func RemoveZoneArea(pool *pgxpool.Pool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		zoneID, err := strconv.Atoi(c.Params("id"))
+		if err != nil || zoneID <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid zone id"})
+		}
+		pincode := c.Params("pincode")
+		if pincode == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid pincode"})
+		}
+
+		if err := repository.RemoveZoneArea(c.Context(), pool, zoneID, pincode); err != nil {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "pincode not found in this zone"})
+		}
+		return c.JSON(fiber.Map{"ok": true})
+	}
+}
+
 // ListAdminOrders — GET /api/admin/orders?zone=&status=&status=&agent=
 // `status` may repeat (the assignments page asks for CREATED and FAILED
 // in one call), so the raw query string is parsed directly.

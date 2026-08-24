@@ -38,9 +38,11 @@ func main() {
 	// RequireAuth verifies on everything below.
 	app.Post("/api/auth/register", handlers.Register(pool))
 	app.Post("/api/auth/login", handlers.Login(pool))
+	app.Get("/api/auth/verify", handlers.VerifyEmail(pool))
 
 	api := app.Group("/api", middleware.RequireAuth())
 	api.Get("/auth/me", handlers.Me(pool))
+	api.Post("/auth/send-verification", handlers.SendVerification(pool))
 
 	orders := api.Group("/orders")
 	orders.Post("/", handlers.CreateOrder(pool))
@@ -59,6 +61,9 @@ func main() {
 	admin := api.Group("/admin", middleware.RequireRole("admin"))
 	admin.Post("/zones", handlers.CreateZone(pool))
 	admin.Get("/zones", handlers.ListZones(pool))
+	admin.Get("/zones/:id<int>/areas", handlers.ListZoneAreas(pool))
+	admin.Post("/zones/:id<int>/areas", handlers.AddZoneAreas(pool))
+	admin.Delete("/zones/:id<int>/areas/:pincode", handlers.RemoveZoneArea(pool))
 	admin.Get("/rate-cards", handlers.ListRateCards(pool))
 	admin.Patch("/rate-cards/:id<int>/lanes", handlers.EditLane(pool))
 	admin.Get("/orders", handlers.ListAdminOrders(pool))
