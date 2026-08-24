@@ -113,7 +113,7 @@ func CreateOrder(ctx context.Context, pool *pgxpool.Pool, customerID string, in 
 		return nil, fmt.Errorf("save drop address: %w", err)
 	}
 
-	orderID, err := repository.CreateOrder(ctx, tx, &repository.InsertOrderInput{
+	orderID, orderNumber, err := repository.CreateOrder(ctx, tx, &repository.InsertOrderInput{
 		CustomerID:       customerID,
 		CreatedByID:      customerID,
 		PickupAddressID:  pickupAddrID,
@@ -150,6 +150,7 @@ func CreateOrder(ctx context.Context, pool *pgxpool.Pool, customerID string, in 
 
 	return &CreateOrderResult{
 		OrderID:             orderID,
+		OrderNumber:         orderNumber,
 		Status:              "CREATED",
 		ChargeableWeightKG:  round2(chargeable),
 		VolumetricWeightKG:  round2(volumetric),

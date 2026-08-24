@@ -358,10 +358,11 @@ type InsertOrderInput struct {
 	OrderValue       *float64
 }
 
-// CreateOrder persists the order inside the caller's transaction and returns its ID.
-// The human-readable order number is generated here: LMD-YYYYMMDD-NNNN, where NNNN
-// counts the orders created today (retried on unique-violation from concurrent inserts).
-func CreateOrder(ctx context.Context, tx pgx.Tx, in *InsertOrderInput) (string, error) {
+// CreateOrder persists the order inside the caller's transaction and
+// returns its ID and generated order number. The human-readable order
+// number is LMD-YYYYMMDD-NNNN, where NNNN counts the orders created
+// today (retried on unique-violation from concurrent inserts).
+func CreateOrder(ctx context.Context, tx pgx.Tx, in *InsertOrderInput) (string, string, error) {
 	var orderValue interface{}
 	if in.OrderValue != nil {
 		orderValue = *in.OrderValue
@@ -372,7 +373,7 @@ func CreateOrder(ctx context.Context, tx pgx.Tx, in *InsertOrderInput) (string, 
 	for attempt := 0; attempt < 5; attempt++ {
 		seq, seqErr := todaysOrderSeq(ctx, tx)
 		if seqErr != nil {
-			return "", seqErr
+			return "", "", seqErr
 		}
 		orderNumber = fmt.Sprintf("LMD-%s-%04d", time.Now().Format("20060102"), seq)
 
@@ -386,22 +387,22 @@ func CreateOrder(ctx context.Context, tx pgx.Tx, in *InsertOrderInput) (string, 
 				rate_card_id, base_charge, cod_surcharge, fuel_surcharge, gst_amount, total_charge,
 				order_value, status
 			 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,'CREATED')
-			 RETURNING id`,
+			 RETURNING id, order_number`,
 			orderNumber, in.CustomerID, in.CreatedByID,
 			in.PickupAddressID, in.DropAddressID, in.PickupZoneID, in.DropZoneID,
 			in.OrderType, in.PaymentType,
 			in.LengthCM, in.BreadthCM, in.HeightCM, in.ActualWeightKG,
 			in.VolumetricWeight, in.ChargeableWeight,
 			in.RateCardID, in.BaseCharge, in.CODSurcharge, in.FuelSurcharge, in.GSTAmount, in.TotalCharge,
-			orderValue).Scan(&id)
+			orderValue).Scan(&id, &orderNumber)
 		if err == nil {
-			return id, nil
+			return id, orderNumber, nil
 		}
 		if !isUniqueViolation(err) {
-			return "", err
+			return "", "", err
 		}
 	}
-	return "", fmt.Errorf("could not allocate a unique order number")
+	return "", "", fmt.Errorf("could not allocate a unique order number")
 }
 
 func todaysOrderSeq(ctx context.Context, tx pgx.Tx) (int, error) {
